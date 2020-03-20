@@ -11,6 +11,7 @@ import numpy as np
 from typing import List
 
 from .facet import Facet
+from .util import EndSurface
 
 @dataclass
 class Rib:
@@ -48,8 +49,8 @@ class Rib:
         if former_rib_edges is not None \
             and len(former_rib_edges) != 0 \
             and len(return_edges) != 0:
-            xy_cross_product = self.edges_xy_only_cross_product_trial()
-            Rib.write_stl_inter_edges(former_rib_edges, return_edges, xy_cross_product, f)
+            end_surface = EndSurface().rib_to_vectors(self.edges)
+            Rib.write_stl_inter_edges(former_rib_edges, return_edges, end_surface.is_clockwise, f)
         return return_edges
 
     def write_stl_start(self, keel, f):
@@ -57,22 +58,22 @@ class Rib:
         if edges_count <= 2:
             return
         else:
-            xy_cross_product = self.edges_xy_only_cross_product_trial()
-            if xy_cross_product < 0.:
-                for i in range(edges_count - 2):
-                    facet = Facet()
-                    facet.vertex_1 = np.array([self.edges[0][0], self.edges[0][1], 0., 1.])
-                    facet.vertex_2 = np.array([self.edges[i+1][0], self.edges[i+1][1], 0., 1.])
-                    facet.vertex_3 = np.array([self.edges[i+2][0], self.edges[i+2][1], 0., 1.])
-                    facet.translation(keel.translation(self.position))
-                    facet.calc_normal()
-                    facet.write(f)
-            elif xy_cross_product > 0.:
+            end_surface = EndSurface().rib_to_vectors(self.edges)
+            if end_surface.is_clockwise:
                 for i in range(edges_count - 2):
                     facet = Facet()
                     facet.vertex_1 = np.array([self.edges[0][0], self.edges[0][1], 0., 1.])
                     facet.vertex_2 = np.array([self.edges[i+2][0], self.edges[i+2][1], 0., 1.])
                     facet.vertex_3 = np.array([self.edges[i+1][0], self.edges[i+1][1], 0., 1.])
+                    facet.translation(keel.translation(self.position))
+                    facet.calc_normal()
+                    facet.write(f)
+            else:
+                for i in range(edges_count - 2):
+                    facet = Facet()
+                    facet.vertex_1 = np.array([self.edges[0][0], self.edges[0][1], 0., 1.])
+                    facet.vertex_2 = np.array([self.edges[i+1][0], self.edges[i+1][1], 0., 1.])
+                    facet.vertex_3 = np.array([self.edges[i+2][0], self.edges[i+2][1], 0., 1.])
                     facet.translation(keel.translation(self.position))
                     facet.calc_normal()
                     facet.write(f)
@@ -82,17 +83,8 @@ class Rib:
         if edges_count <= 2:
             return
         else:
-            xy_cross_product = self.edges_xy_only_cross_product_trial()
-            if xy_cross_product < 0.:
-                for i in range(edges_count - 2):
-                    facet = Facet()
-                    facet.vertex_1 = np.array([self.edges[0][0], self.edges[0][1], 0., 1.])
-                    facet.vertex_2 = np.array([self.edges[i+2][0], self.edges[i+2][1], 0., 1.])
-                    facet.vertex_3 = np.array([self.edges[i+1][0], self.edges[i+1][1], 0., 1.])
-                    facet.translation(keel.translation(self.position))
-                    facet.calc_normal()
-                    facet.write(f)
-            elif xy_cross_product > 0.:
+            end_surface = EndSurface().rib_to_vectors(self.edges)
+            if end_surface.is_clockwise:
                 for i in range(edges_count - 2):
                     facet = Facet()
                     facet.vertex_1 = np.array([self.edges[0][0], self.edges[0][1], 0., 1.])
@@ -101,14 +93,15 @@ class Rib:
                     facet.translation(keel.translation(self.position))
                     facet.calc_normal()
                     facet.write(f)
-    
-    def edges_xy_only_cross_product_trial(self):
-        point_zero = np.array([self.edges[0][0], self.edges[0][1]])
-        point_one = np.array([self.edges[1][0], self.edges[1][1]])
-        point_two = np.array([self.edges[2][0], self.edges[2][1]])
-        vector_one = point_one - point_zero
-        vector_two = point_two - point_zero
-        return np.cross(vector_one, vector_two)
+            else:
+                for i in range(edges_count - 2):
+                    facet = Facet()
+                    facet.vertex_1 = np.array([self.edges[0][0], self.edges[0][1], 0., 1.])
+                    facet.vertex_2 = np.array([self.edges[i+2][0], self.edges[i+2][1], 0., 1.])
+                    facet.vertex_3 = np.array([self.edges[i+1][0], self.edges[i+1][1], 0., 1.])
+                    facet.translation(keel.translation(self.position))
+                    facet.calc_normal()
+                    facet.write(f)
 
     @staticmethod
     def draw_beam(former_rib_edges, edges):
@@ -126,9 +119,24 @@ class Rib:
         glEnd()
     
     @staticmethod
-    def write_stl_inter_edges(former_rib_edges, edges, xy_cross_product, f):
+    def write_stl_inter_edges(former_rib_edges, edges, is_cockwise, f):
         edges_count = len(edges)
-        if xy_cross_product < 0.:
+        if is_cockwise:
+            for i in range(edges_count):
+                facet = Facet()
+                facet.vertex_1 = edges[i]
+                facet.vertex_2 = edges[i-1]
+                facet.vertex_3 = former_rib_edges[i-1]#i==0の時も成立
+                facet.calc_normal()
+                facet.write(f)
+
+                facet = Facet()
+                facet.vertex_1 = edges[i]
+                facet.vertex_2 = former_rib_edges[i-1]
+                facet.vertex_3 = former_rib_edges[i]
+                facet.calc_normal()
+                facet.write(f)
+        else:
             for i in range(edges_count):
                 facet = Facet()
                 facet.vertex_1 = edges[i]
@@ -143,19 +151,3 @@ class Rib:
                 facet.vertex_3 = former_rib_edges[i-1]
                 facet.calc_normal()
                 facet.write(f)
-        elif xy_cross_product > 0.:
-            for i in range(edges_count):
-                facet = Facet()
-                facet.vertex_1 = edges[i]
-                facet.vertex_2 = edges[i-1]
-                facet.vertex_3 = former_rib_edges[i-1]
-                facet.calc_normal()
-                facet.write(f)
-
-                facet = Facet()
-                facet.vertex_1 = edges[i]
-                facet.vertex_2 = former_rib_edges[i-1]
-                facet.vertex_3 = former_rib_edges[i]
-                facet.calc_normal()
-                facet.write(f)
-            

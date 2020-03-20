@@ -10,6 +10,7 @@ import numpy as np
 
 from .keel import Keel
 from .rib import Rib
+from .util import EndSurface
 
 from typing import List, Any
 
@@ -104,8 +105,8 @@ class Ship:
                 translated_edge_to = np.dot(np.array([edge[0], edge[1], 0., 1.]), self.smoothing_to.keel.translation(rib_to.position))
                 translated_edges_to.append(translated_edge_to)
             
-            xy_cross_product = rib_from.edges_xy_only_cross_product_trial()
-            Rib.write_stl_inter_edges(translated_edges_from, translated_edges_to, xy_cross_product, f)
+            end_surface = EndSurface().rib_to_vectors(rib_to.edges)
+            Rib.write_stl_inter_edges(translated_edges_from, translated_edges_to, end_surface.is_clockwise, f)
         else:
             if len(self.ribs) == 0:
                 return
