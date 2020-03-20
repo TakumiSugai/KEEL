@@ -68,6 +68,13 @@ class Shipwright:
         self.dock.resize_keel(ship, depth)
         return self.set_cached_parameter(ship)
     
+    def pillar(self, edges, depth):
+        ship = self.dock.generate_ship()
+        ship.add_rib(0, edges)
+        ship.add_rib(1, edges)
+        self.dock.resize_keel(ship, depth)
+        return self.set_cached_parameter(ship)
+    
     def rib_edges_circular(self, radius, arc_central_angle, division, closed=False):
         division = division if closed else division - 1
         edges = []

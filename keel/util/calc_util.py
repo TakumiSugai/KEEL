@@ -1,8 +1,5 @@
 import numpy as np
 
-def hello():
-    print("hello\n")
-
 def extract_vector_1by2(vector):
     return vector[:2]
 
@@ -26,18 +23,18 @@ def exterior_angle(vector_from, vector_to):
     
     outer_product = np.cross(vector_from_xy, vector_to_xy)
 
-    if outer_product < 0:
-        return -np.pi + unsigined_interior_angle(vector_from_xy, vector_to_xy)
-    elif 0 < outer_product:
-        return np.pi - unsigined_interior_angle(vector_from_xy, vector_to_xy)
+    if 0 < outer_product:
+        return unsigined_exterior_angle(vector_from_xy, vector_to_xy)
+    elif outer_product < 0:
+        return - unsigined_exterior_angle(vector_from_xy, vector_to_xy)
     else: #outer_product = 0
         inner_product = np.dot(vector_from_xy, vector_to_xy)
         if inner_product < 0:
-            return 0
-        else: #0 < inner_product
             return np.pi
+        else: #0 < inner_product
+            return 0
 
-def unsigined_interior_angle(vector_from, vector_to):
+def unsigined_exterior_angle(vector_from, vector_to):
     vector_from_xy = extract_vector_1by2(vector_from)
     vector_to_xy = extract_vector_1by2(vector_to)
 

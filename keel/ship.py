@@ -105,7 +105,7 @@ class Ship:
                 translated_edge_to = np.dot(np.array([edge[0], edge[1], 0., 1.]), self.smoothing_to.keel.translation(rib_to.position))
                 translated_edges_to.append(translated_edge_to)
             
-            end_surface = EndSurface().rib_to_vectors(rib_to.edges)
+            end_surface = EndSurface().rib_to_vectors(rib_to)
             Rib.write_stl_inter_edges(translated_edges_from, translated_edges_to, end_surface.is_clockwise, f)
         else:
             if len(self.ribs) == 0:
