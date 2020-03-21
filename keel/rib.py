@@ -10,7 +10,7 @@ import numpy as np
 
 from typing import List
 
-from .util import EndSurface, Facet
+from .util import EndSurface, Facet, MonocoqueShell
 
 @dataclass
 class Rib:
@@ -73,6 +73,38 @@ class Rib:
                 facet.translation(keel.translation(self.position))
                 facet.calc_normal()
                 facet.write(f)
+    
+    def generate_monocoque_shells_beam(self, keel, former_rib_edges, monocoque_shells):
+        edges_count = len(self.edges)
+        if self.edges is None or edges_count <= 2:
+            return None
+        return_edges = []
+        for edge in self.edges:
+            translated_edge = np.array([edge[0], edge[1], keel.length * self.position, 1.])
+            return_edges.append(translated_edge)
+        if former_rib_edges is not None \
+            and len(former_rib_edges) != 0 \
+            and len(return_edges) != 0:
+
+            end_surface = EndSurface().rib_to_vectors(self)
+            monocoque_shells.extend(Rib.generate_monocoque_inter_edges(former_rib_edges, return_edges, end_surface.is_clockwise))
+        return return_edges
+
+    def generate_monocoque_shell_start(self, z_position):
+        edges_count = len(self.edges)
+        if edges_count <= 2:
+            return None
+        else:
+            return EndSurface().rib_to_vectors(self).generate_monocoque_shells(
+                z_position, is_start_side=True)
+
+    def generate_monocoque_shell_end(self, z_position):
+        edges_count = len(self.edges)
+        if edges_count <= 2:
+            return None
+        else:
+            return EndSurface().rib_to_vectors(self).generate_monocoque_shells(
+                z_position, is_start_side=False)
 
     @staticmethod
     def draw_beam(former_rib_edges, edges):
@@ -122,3 +154,16 @@ class Rib:
                 facet.vertex_3 = former_rib_edges[i]
                 facet.calc_normal()
                 facet.write(f)
+    
+    @staticmethod
+    def generate_monocoque_inter_edges(former_rib_edges, edges, is_clockwise):
+        monocoque_shells = []
+        for i in range(len(edges)):
+            monocoque_shell_1 = MonocoqueShell(edges[i], edges[i-1], former_rib_edges[i-1])
+            monocoque_shells.append(monocoque_shell_1)
+            monocoque_shell_2 = MonocoqueShell(edges[i], former_rib_edges[i-1], former_rib_edges[i])
+            monocoque_shells.append(monocoque_shell_2)
+            if is_clockwise:
+                monocoque_shell_1.inverse()
+                monocoque_shell_2.inverse()
+        return monocoque_shells

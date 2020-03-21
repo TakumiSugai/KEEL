@@ -10,7 +10,7 @@ import numpy as np
 
 from .keel import Keel
 from .rib import Rib
-from .util import EndSurface
+from .util import EndSurface, MonocoqueShell
 
 from typing import List, Any
 
@@ -27,6 +27,8 @@ class Ship:
     smoothing:bool = field(default=False)
     smoothing_from:any = field(default=None)
     smoothing_to:any = field(default=None)
+
+    monocoque_shells:List[MonocoqueShell] =field(default_factory=list)
 
     def length(self):
         return self.keel.length()
@@ -60,6 +62,10 @@ class Ship:
     def draw(self):
         if self.keel is None:
             return
+        if 0 != len(self.monocoque_shells):
+            for shell in self.monocoque_shells:
+                shell.draw(self.keel)
+            return
         if self.smoothing:
             if self.smoothing_from is None\
                 or self.smoothing_from.ribs is None or len(self.smoothing_from.ribs) == 0\
@@ -85,6 +91,10 @@ class Ship:
     
     def write_stl(self, f):
         if self.keel is None:
+            return
+        if 0 != len(self.monocoque_shells):
+            for shell in self.monocoque_shells:
+                shell.write_stl(self.keel, f)
             return
         if self.smoothing:
             pass
@@ -117,8 +127,6 @@ class Ship:
             former_rib_edges = None
             for rib in self.ribs:
                 former_rib_edges = rib.write_stl_beam(self.keel, former_rib_edges, f)
-        
-        
 
     def init_keel(self):
         self.keel = Keel()
@@ -156,3 +164,21 @@ class Ship:
                 rib_start = rib
         return rib_start
 
+    def convert_to_monocoque(self):
+        if self.keel is None:
+            return None
+        # smoothingへは未対応
+        if len(self.ribs) == 0:
+            return None
+        monocoque_shells = []
+        
+        rib_start = self.get_rib_start(self)
+        monocoque_shells.extend(rib_start.generate_monocoque_shell_start(self.keel.length * rib_start.position))
+
+        rib_end = self.get_rib_end(self)
+        monocoque_shells.extend(rib_end.generate_monocoque_shell_end(self.keel.length * rib_end.position))
+        
+        former_rib_edges = None
+        for rib in self.ribs:
+            former_rib_edges = rib.generate_monocoque_shells_beam(self.keel, former_rib_edges, monocoque_shells)
+        self.monocoque_shells = monocoque_shells
