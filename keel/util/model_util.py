@@ -98,14 +98,19 @@ class EndSurface:
             facets.append(facet)
         return facets
     
-    def generate_monocoque_shells(self, z_position, is_start_side):
+    def generate_monocoque_shells(self, monocoque_shell, z_position, is_start_side):
         is_need_inverse = is_start_side ^ self.is_clockwise
         
-        monocoque_shells = []
         edges = self.edges[:]
         vectors = self.vectors[:]
         exterior_angles = self.exterior_angles[:]
         sum_exterior_angles = sum(self.exterior_angles)
+
+        for edge in edges:
+            monocoque_shell.positions.append(
+                Position(calc_util.extend_vector_1by4(edge)))
+            monocoque_shell.positions[-1].position[2] = z_position
+        positions = monocoque_shell.positions[- len(self.edges):]
 
         is_concave = True
         while(is_concave):
@@ -114,30 +119,27 @@ class EndSurface:
                 if exterior_angles[i - 2] * sum_exterior_angles <= 0:
                     is_concave = True
                     if 0 < exterior_angles[i - 1] * sum_exterior_angles:
-                        monocoque_shell = MonocoqueShell(
-                            calc_util.extend_vector_1by4(edges[i-2]),
-                            calc_util.extend_vector_1by4(edges[i-1]),
-                            calc_util.extend_vector_1by4(edges[i]))
+                        monocoque_shell.triangles.append(Triangle(
+                            positions[i-2],
+                            positions[i-1],
+                            positions[i]))
                         if is_need_inverse:
-                            monocoque_shell.inverse()
-                        monocoque_shells.append(monocoque_shell)
+                            monocoque_shell.triangles[-1].inverse()
                         del edges[i-1]
+                        del positions[i-1]
                         vectors = EndSurface.calc_vectors(edges)
                         exterior_angles = EndSurface.calc_exterior_angles(vectors)
                         break
         
         for i in range(len(edges) - 2):
-            monocoque_shell = MonocoqueShell(
-                calc_util.extend_vector_1by4(edges[0]),
-                calc_util.extend_vector_1by4(edges[i+1]),
-                calc_util.extend_vector_1by4(edges[i+2]))
+            monocoque_shell.triangles.append(Triangle(
+                positions[0],
+                positions[i+1],
+                positions[i+2]))
             if is_need_inverse:
-                monocoque_shell.inverse()
-            monocoque_shells.append(monocoque_shell)
-        for shell in monocoque_shells:
-            shell.set_z_position(z_position)
-        return monocoque_shells
-
+                monocoque_shell.triangles[-1].inverse()
+        return monocoque_shell.positions[- len(self.edges):]
+        
     @staticmethod
     def calc_exterior_angles(vectors):
         exterior_angles = []
@@ -157,48 +159,538 @@ class EndSurface:
             vectors.append(np.array(edges[i]) - np.array(edges[i-1]))
         return vectors
 
+    
 @dataclass
-class MonocoqueShell:
-    vertex_1: np.array = field(default=None)
-    vertex_2: np.array = field(default=None)
-    vertex_3: np.array = field(default=None)
+class Position:
+    position: np.array
+    translated_position: np.array = field(default=None)
+
+    def translate(self, translation):
+        self.translated_position = \
+            np.dot(calc_util.extend_vector_1by4(self.position), translation)
+
+    def copy_translated_to_default(self):
+        self.position = self.translated_position
+        self.translated_position = None
+    
+    def vector_to(self, position):
+        vector = position.position - self.position
+        vector[3] = 1.
+        return vector
+    
+@dataclass
+class Triangle:
+    vertex_1: Position
+    vertex_2: Position
+    vertex_3: Position
 
     def inverse(self):
         temp = self.vertex_2
         self.vertex_2 = self.vertex_3
         self.vertex_3 = temp
 
-    def draw(self, keel):
+    def is_contains(self, position):
+        return self.vertex_1 is position or self.vertex_2 is position or self.vertex_3 is position
+
+    def is_contains_two_position(self, positions):
+        return 2 == sum([1 for x in positions if self.is_contains(x)])
+
+    def is_touched_side(self, triangle):
+        return 2 == sum([1 for x in [self.is_contains(triangle.vertex_1), self.is_contains(triangle.vertex_2), self.is_contains(triangle.vertex_3)] if x])
+    
+    def is_equal(self, triangle):
+        return 3 == sum([1 for x in [self.is_contains(triangle.vertex_1), self.is_contains(triangle.vertex_2), self.is_contains(triangle.vertex_3)] if x])
+
+    def draw(self):
         if self.vertex_1 is None or self.vertex_2 is None or self.vertex_3 is None:
             return
         glLineWidth(1)
         glBegin(GL_LINE_LOOP)
         glColor3f(0,1,0.5)
 
-        translation = np.dot(keel.relative_translation, keel.origin_translation)
+        glVertex3fv((self.vertex_1.translated_position[0], 
+            self.vertex_1.translated_position[1], 
+            self.vertex_1.translated_position[2]))
+
+        glVertex3fv((self.vertex_2.translated_position[0], 
+            self.vertex_2.translated_position[1], 
+            self.vertex_2.translated_position[2]))
         
-        vertex_1_translated = np.dot(calc_util.extend_vector_1by4(self.vertex_1), translation)
-        glVertex3fv((vertex_1_translated[0], vertex_1_translated[1], vertex_1_translated[2]))
-
-        vertex_2_translated = np.dot(calc_util.extend_vector_1by4(self.vertex_2), translation)
-        glVertex3fv((vertex_2_translated[0], vertex_2_translated[1], vertex_2_translated[2]))
-
-        vertex_3_translated = np.dot(calc_util.extend_vector_1by4(self.vertex_3), translation)
-        glVertex3fv((vertex_3_translated[0], vertex_3_translated[1], vertex_3_translated[2]))
-
+        glVertex3fv((self.vertex_3.translated_position[0], 
+            self.vertex_3.translated_position[1], 
+            self.vertex_3.translated_position[2]))
+        
         glEnd()
+    
+    def get_positions(self):
+        return [self.vertex_1, self.vertex_2, self.vertex_3]
     
     def write_stl(self, keel, f):
         if self.vertex_1 is None or self.vertex_2 is None or self.vertex_3 is None:
             return
-        facet = Facet(self.vertex_1, self.vertex_2, self.vertex_3)
+        facet = Facet(self.vertex_1.position, self.vertex_2.position, self.vertex_3.position)
         facet.translation(np.dot(keel.relative_translation, keel.origin_translation))
         facet.calc_normal()
         facet.write(f)
 
-    def set_z_position(self, z_position):
-        if self.vertex_1 is None or self.vertex_2 is None or self.vertex_3 is None:
-            return
-        self.vertex_1[2] = z_position
-        self.vertex_2[2] = z_position
-        self.vertex_3[2] = z_position
+@dataclass
+class MonocoqueShell:
+    positions:List[Position] = field(default_factory=list)
+    triangles:List[Triangle] = field(default_factory=list)
+
+    def translate(self, translation):
+        for position in self.positions:
+            position.translate(translation)
+    
+    def copy_translated_to_default(self):
+        for position in self.positions:
+            position.copy_translated_to_default()
+
+    def draw(self, keel):
+        self.translate(np.dot(keel.relative_translation, keel.origin_translation))
+        
+        for triangle in self.triangles:
+            triangle.draw()
+    
+    def write_stl(self, keel, f):
+        for triangle in self.triangles:
+            triangle.write_stl(keel, f)
+
+    def generate_line_segments(self):
+        if 0 == len(self.triangles):
+            return None
+        line_segments = []
+        for triangle in self.triangles:
+            if 0 == len(line_segments):
+                line_segments.extend([
+                    LineSegment(triangle.vertex_1, triangle.vertex_2), 
+                    LineSegment(triangle.vertex_2, triangle.vertex_3), 
+                    LineSegment(triangle.vertex_3, triangle.vertex_1)
+                ])
+                for line_segment in line_segments:
+                    line_segment.belong_to.append(triangle)
+                continue
+
+            v1_v2 = False
+            v2_v3 = False
+            v3_v1 = False
+            for line_segment in line_segments:
+                if line_segment.check_triangle(triangle):
+                    is_contains_v1 = line_segment.is_contains(triangle.vertex_1)
+                    is_contains_v2 = line_segment.is_contains(triangle.vertex_2)
+                    is_contains_v3 = line_segment.is_contains(triangle.vertex_3)
+                    v1_v2 = v1_v2 or (is_contains_v1 and is_contains_v2)
+                    v2_v3 = v2_v3 or (is_contains_v2 and is_contains_v3)
+                    v3_v1 = v3_v1 or (is_contains_v3 and is_contains_v1)
+
+            if not v1_v2:
+                line_segments.append(LineSegment(triangle.vertex_1, triangle.vertex_2))
+                line_segments[-1].belong_to.append(triangle)
+            if not v2_v3:
+                line_segments.append(LineSegment(triangle.vertex_2, triangle.vertex_3))
+                line_segments[-1].belong_to.append(triangle)
+            if not v3_v1:
+                line_segments.append(LineSegment(triangle.vertex_3, triangle.vertex_1))
+                line_segments[-1].belong_to.append(triangle)
+        return line_segments
+
+@dataclass
+class LineSegment:
+    end1:Position = field(default=None)
+    end2:Position = field(default=None)
+    belong_to:List[Triangle] = field(default_factory=list)
+
+    def check_triangle(self, triangle):
+        if triangle.is_contains(self.end1) and triangle.is_contains(self.end2):
+            self.belong_to.append(triangle)
+            return True
+        return False
+
+    def is_contains(self, position):
+        return self.end1 is position or self.end2 is position
+
+    def is_equal(self, position1, position2):
+        return self.is_contains(position1) and self.is_contains(position2)
+
+    def get_positions(self):
+        return [self.end1, self.end2]
+    
+@dataclass
+class Penetration:
+    line_segment:LineSegment
+    position_on_lines_segment:float
+    penetrated_triangle:Triangle
+    position:Position
+
+    def position_on_lines_segment_from(self, position):
+        return self.position_on_lines_segment if self.line_segment.end1 is position else (1. - self.position_on_lines_segment)
+
+def calc_penetration(triangles, line_segments):
+    penetrations = [] 
+    for triangle in triangles:
+        for line_segment in line_segments:
+            if not calc_util.is_positions_overrap(triangle.get_positions(), line_segment.get_positions()):
+                continue
+            vector_ray = calc_util.extract_vector_1by3(line_segment.end1.vector_to(line_segment.end2))
+            
+            vector_ray_to_v1 = calc_util.extract_vector_1by3(line_segment.end1.vector_to(triangle.vertex_1))
+            vector_ray_to_v2 = calc_util.extract_vector_1by3(line_segment.end1.vector_to(triangle.vertex_2))
+            vector_ray_to_v3 = calc_util.extract_vector_1by3(line_segment.end1.vector_to(triangle.vertex_3))
+
+            outer1_2 = np.cross(vector_ray_to_v1, vector_ray_to_v2)
+            outer2_3 = np.cross(vector_ray_to_v2, vector_ray_to_v3)
+            outer3_1 = np.cross(vector_ray_to_v3, vector_ray_to_v1)
+
+            inner_product1 = np.dot(outer1_2, vector_ray)
+            inner_product2 = np.dot(outer2_3, vector_ray)
+            inner_product3 = np.dot(outer3_1, vector_ray)
+
+            if 0 > inner_product1 * inner_product2 or 0 > inner_product1 * inner_product3:
+                continue
+            
+            vector_side1_2 = calc_util.extract_vector_1by3(triangle.vertex_1.vector_to(triangle.vertex_2))
+            vector_side1_3 = calc_util.extract_vector_1by3(triangle.vertex_1.vector_to(triangle.vertex_3))
+            vector_ray_origin_to_vertex1 = calc_util.extract_vector_1by3(triangle.vertex_1.vector_to(line_segment.end1))
+            
+            solved = np.dot(vector_ray_origin_to_vertex1, np.linalg.inv(np.array([-vector_ray, vector_side1_2, vector_side1_3])))
+            
+            if solved[0] < 0 or 1 < solved[0] :
+                continue
+
+            penetrated_positiron = Position(calc_util.extend_vector_1by4(
+                calc_util.extract_vector_1by3(triangle.vertex_1.position) + vector_side1_2 * solved[1] + vector_side1_3 * solved[2]))
+            penetrations.append(Penetration(line_segment, solved[0], triangle, penetrated_positiron))
+    return penetrations
+
+def fetch_positions_not_affected_penetrations(positions, line_segments, penetrations):
+    positions_not_affected_penetrations = []
+    previous_positions_count = 0
+    while True: 
+        line_segments_related =  list(x for x in line_segments if any(x.is_contains(y) for y in positions))
+        line_segments_not_affected_penetrations = list(x for x in line_segments_related if not any(x is y.line_segment for y in penetrations))
+        positions_not_affected_penetrations.extend(list(x.end1 for x in line_segments_not_affected_penetrations if not any(x.end1 is y for y in positions_not_affected_penetrations)))
+        positions_not_affected_penetrations.extend(list(x.end2 for x in line_segments_not_affected_penetrations if not any(x.end2 is y for y in positions_not_affected_penetrations)))
+        if previous_positions_count == len(positions_not_affected_penetrations):
+            break
+        previous_positions_count = len(positions_not_affected_penetrations)
+    return positions_not_affected_penetrations
+    
+
+
+def fetch_penetrated_triangles(penetrations):
+    triangles = []
+    for penetration in penetrations:
+        if any(penetration.penetrated_triangle is x for x in triangles):
+            continue
+        triangles.append(penetration.penetrated_triangle)
+    return triangles
+
+def fetch_penetrating_triangles(penetrations):
+    triangles = []
+    for penetration in penetrations:
+        for triangle in penetration.line_segment.belong_to:
+            if any(triangle is x for x in triangles):
+                continue
+            triangles.append(triangle)
+    return triangles
+
+def fetch_penetrations_related_positions(penetrations, position1, position2):
+    related_penetrations = list(x for x in penetrations if x.line_segment.is_equal(position1, position2))
+    related_penetrations.sort(key=lambda p: p.position_on_lines_segment_from(position1))
+    return related_penetrations
+
+def fetch_pair_side_penetration(target_side_penetration, side_penetrations, exclude=[]):
+    for side_penetration in side_penetrations:
+        if any(x is side_penetration for x in exclude):
+            continue
+        if side_penetration is target_side_penetration:
+            continue
+        if side_penetration.penetrated_triangle is target_side_penetration.penetrated_triangle:
+            return side_penetration
+    return None 
+
+def fetch_indirect_pair_side_penetration(triangle, side_penetrations, exclude=[]):
+    for side_penetration in side_penetrations:
+        if any(x is side_penetration for x in exclude):
+            continue
+        if side_penetration.penetrated_triangle.is_equal(triangle):
+            return side_penetration
+    return None
+
+def fetch_pair_penetration(triangle, penetrations, exclude=[]):
+    for penetration in penetrations:
+        if any(x is penetration for x in exclude):
+            continue
+        if any(triangle.is_equal(x) for x in penetration.line_segment.belong_to):
+            return penetration
+    return None
+
+def fetch_penetrations_related_triangle(triangle, penetrations):
+    return list(x for x in penetrations if x.penetrated_triangle is triangle)
+
+def fetch_triangles_contains_two_positions(positions, triangles, exclude=[]):
+    return list(x for x in triangles if x.is_contains_two_position(positions) and not any(x is y for y in exclude))
+
+def fetch_triangles_contains_positions_pair(position1, position2, triangles, exclude=[]):
+    return list(x for x in triangles if x.is_contains(position1) and x.is_contains(position2) and not any(x is y for y in exclude))
+
+def fetch_triangles_contains_position(position, triangles, exclude=[]):
+    return list(x for x in triangles if x.is_contains(position) and not any(x is y for y in exclude))
+
+def subdivide_penetrated_faces(penetrations1, penetrations2):
+
+    penetrating_triangles1 = fetch_penetrating_triangles(penetrations2)
+
+    triangles = []
+
+    for penetrated_triangle in penetrating_triangles1:
+        side1_2_penetratings = fetch_penetrations_related_positions(penetrations2, penetrated_triangle.vertex_1, penetrated_triangle.vertex_2)
+        side2_3_penetratings = fetch_penetrations_related_positions(penetrations2, penetrated_triangle.vertex_2, penetrated_triangle.vertex_3)
+        side3_1_penetratings = fetch_penetrations_related_positions(penetrations2, penetrated_triangle.vertex_3, penetrated_triangle.vertex_1)
+        
+        penetrations = fetch_penetrations_related_triangle(penetrated_triangle, penetrations1)
+
+        side_penetrations = side1_2_penetratings.copy()
+        side_penetrations.extend(side2_3_penetratings)
+        side_penetrations.extend(side3_1_penetratings)
+
+        checked_side_penetrations = []
+        
+        current = None
+        loop_start_side_penetration = None
+        is_last_path_along_side = False
+        path_penetrations = []
+
+        poligon = []
+        poligons = []
+        while None != current or len(checked_side_penetrations) != len(side_penetrations):
+            if None == current:
+                count = 0
+                for side_penetration in side_penetrations:
+                    count = count + 1
+                    if any(side_penetration is x for x in checked_side_penetrations):
+                       continue
+                    current = side_penetration
+                    loop_start_side_penetration = side_penetration
+                    is_last_path_along_side = False
+                    break
+            
+            if current is penetrated_triangle.vertex_1:
+                if 0 == len(side1_2_penetratings):
+                    current = penetrated_triangle.vertex_2
+                    poligon.append(current)
+                else:
+                    current = side1_2_penetratings[0]
+                    poligon.append(current.position)
+                is_last_path_along_side = True
+
+            elif current is penetrated_triangle.vertex_2:
+                if 0 == len(side2_3_penetratings):
+                    current = penetrated_triangle.vertex_3
+                    poligon.append(current)
+                else:
+                    current = side2_3_penetratings[0]
+                    poligon.append(current.position)
+                is_last_path_along_side = True
+
+            elif current is penetrated_triangle.vertex_3:
+                if 0 == len(side3_1_penetratings):
+                    current = penetrated_triangle.vertex_1
+                    poligon.append(current)
+                else:
+                    current = side3_1_penetratings[0]
+                    poligon.append(current.position)
+                is_last_path_along_side = True
+
+            elif 0 != len(side1_2_penetratings) and current is side1_2_penetratings[-1] and not is_last_path_along_side:
+                checked_side_penetrations.append(current)
+                current = penetrated_triangle.vertex_2
+                poligon.append(current)
+                is_last_path_along_side = True
+            elif 0 != len(side2_3_penetratings) and current is side2_3_penetratings[-1] and not is_last_path_along_side:
+                checked_side_penetrations.append(current)
+                current = penetrated_triangle.vertex_3
+                poligon.append(current)
+                is_last_path_along_side = True
+            elif 0 != len(side3_1_penetratings) and current is side3_1_penetratings[-1] and not is_last_path_along_side:
+                checked_side_penetrations.append(current)
+                current = penetrated_triangle.vertex_1
+                poligon.append(current)
+                is_last_path_along_side = True
+            else:
+                if is_last_path_along_side:
+                    path_penetrations = [current]
+                    pair_side_penetration = fetch_pair_side_penetration(current, side_penetrations, exclude=path_penetrations)
+                    if None != pair_side_penetration:
+                        current = pair_side_penetration
+                    else:
+                        current_triangle = current.penetrated_triangle
+                        indirect_pair_side_penetration = None
+                        while None == indirect_pair_side_penetration:
+                            pair_penetration = fetch_pair_penetration(current_triangle, penetrations, exclude=path_penetrations)
+                            current_triangle = next(x for x in pair_penetration.line_segment.belong_to if not current_triangle is x)
+                            poligon.append(pair_penetration.position)
+                            path_penetrations.append(pair_penetration)
+                            indirect_pair_side_penetration = fetch_indirect_pair_side_penetration(current_triangle, side_penetrations, exclude=path_penetrations)
+                        current = indirect_pair_side_penetration
+                    poligon.append(current.position)
+                    is_last_path_along_side = False
+                else:
+                    checked_side_penetrations.append(current)
+                    index_current_penetration = None
+                    for index, side_penetration in enumerate(side_penetrations):
+                        if current is side_penetration:
+                            index_current_penetration = index
+                            break
+                    current = side_penetrations[index_current_penetration + 1]
+                    poligon.append(current.position)
+                    is_last_path_along_side = True
+                
+            if loop_start_side_penetration is current:
+                current = None
+                poligons.append(poligon.copy())
+                poligon = []
+                path_penetrations = []
+        triangles.extend(generate_subdivide_triangles(poligons, penetrated_triangle))
+    return triangles
+
+        
+
+def calc_concave_3d(positions, default_outer_product):
+    epsilon = 1e-14
+    vectors = []
+    for i in range(len(positions)):
+        vectors.append(calc_util.extract_vector_1by3(positions[i-1].vector_to(positions[i])))
+    
+    list_is_concave = []
+    for i in range(len(vectors)):
+        outer_product = None
+        if i == len(vectors) - 1:
+            outer_product = np.cross(vectors[i], vectors[0])
+        else:
+            outer_product = np.cross(vectors[i], vectors[i + 1])
+        dot_outer_products = np.dot(outer_product, default_outer_product)
+
+        if -epsilon > dot_outer_products:
+            list_is_concave.append(True)
+        elif epsilon < dot_outer_products:
+            list_is_concave.append(False)
+        else: # -epsilon < dot_outer_products < epsilon
+            list_is_concave.append(False)
+    return list_is_concave
+
+def generate_subdivide_triangles(poligons, triangle):
+    triangles = []
+    for poligon in poligons:
+        if 3 == len(poligon):
+            triangles.append(Triangle(poligon[0], poligon[1], poligon[2]))
+            continue
+
+        default_outer_product = calc_util.normalize_vector(np.cross(
+            calc_util.extract_vector_1by3(triangle.vertex_1.vector_to(triangle.vertex_2)), 
+            calc_util.extract_vector_1by3(triangle.vertex_1.vector_to(triangle.vertex_3))))
+
+        list_is_concave = calc_concave_3d(poligon, default_outer_product)
+        while(any(list_is_concave)):
+            for i in range(len(list_is_concave)):
+                if list_is_concave[i - 2]:
+                    if not list_is_concave[i - 1]:
+                        triangles.append(Triangle(
+                            poligon[i-2],
+                            poligon[i-1],
+                            poligon[i]))
+                        del poligon[i-1]
+                        list_is_concave = calc_concave_3d(poligon, default_outer_product)
+                        break
+        
+        for i in range(len(poligon) - 2):
+            triangles.append(Triangle(
+                poligon[0],
+                poligon[i+1],
+                poligon[i+2]))
+    return triangles
+
+def is_line_end_outer(start, end, penetrated_triangle):
+    default_outer_product = calc_util.normalize_vector(np.cross(
+        calc_util.extract_vector_1by3(penetrated_triangle.vertex_1.vector_to(penetrated_triangle.vertex_2)), 
+        calc_util.extract_vector_1by3(penetrated_triangle.vertex_1.vector_to(penetrated_triangle.vertex_3))))
+    
+    line_vector = calc_util.normalize_vector(calc_util.extract_vector_1by3(start.vector_to(end)))
+    dot_outer_products = np.dot(default_outer_product, line_vector)
+    if dot_outer_products > 0:
+        return True
+    return False
+
+def fetch_position_pair_inout(penetrations):
+    positions_inner = []
+    positions_outer = []
+    checked_penetrations = []
+    for penetration in penetrations:
+        if any(x is penetration for x in checked_penetrations):
+            continue
+        penetrations_same_line_segment_sorted_from_end2 \
+            = fetch_penetrations_related_positions(penetrations, penetration.line_segment.end2, penetration.line_segment.end1)
+        
+        if 1 == len(penetrations_same_line_segment_sorted_from_end2):
+            if is_line_end_outer(penetration.line_segment.end1, penetration.line_segment.end2, penetration.penetrated_triangle):
+                positions_inner.append((penetration.position, penetration.line_segment.end1))
+                positions_outer.append((penetration.position, penetration.line_segment.end2))
+            else:
+                positions_inner.append((penetration.position, penetration.line_segment.end2))
+                positions_outer.append((penetration.position, penetration.line_segment.end1))
+            continue
+        checked_penetrations.extend(penetrations_same_line_segment_sorted_from_end2)
+        is_outer_now = is_line_end_outer(penetration.line_segment.end1, penetration.line_segment.end2, penetration.penetrated_triangle)
+        previous_position = penetration.line_segment.end2
+        for penetration_same_line_segment in penetrations_same_line_segment_sorted_from_end2:
+            if is_outer_now:
+                positions_outer.append((previous_position, penetration_same_line_segment.position))
+            else:
+                positions_inner.append((previous_position, penetration_same_line_segment.position))
+            is_outer_now = not is_outer_now
+            previous_position = penetration_same_line_segment.position
+        if is_outer_now:
+            positions_outer.append((previous_position, penetration.line_segment.end1))
+        else:
+            positions_inner.append((previous_position, penetration.line_segment.end1))
+    return (positions_inner, positions_outer)
+
+def fetch_positions_inout(penetrations):
+    positions_inner = []
+    positions_outer = []
+    checked_penetrations = []
+    for penetration in penetrations:
+        if any(x is penetration for x in checked_penetrations):
+            continue
+        penetrations_same_line_segment_sorted_from_end2 \
+            = fetch_penetrations_related_positions(penetrations, penetration.line_segment.end2, penetration.line_segment.end1)
+        
+        if 1 == len(penetrations_same_line_segment_sorted_from_end2):
+            if is_line_end_outer(penetration.line_segment.end1, penetration.line_segment.end2, penetration.penetrated_triangle):
+                if not any(x is penetration.line_segment.end1 for x in positions_inner):
+                    positions_inner.append(penetration.line_segment.end1)
+                if not any(x is penetration.line_segment.end2 for x in positions_outer):
+                    positions_outer.append(penetration.line_segment.end2)
+            else:
+                if not any(x is penetration.line_segment.end2 for x in positions_inner):
+                    positions_inner.append(penetration.line_segment.end2)
+                if not any(x is penetration.line_segment.end1 for x in positions_outer):
+                    positions_outer.append(penetration.line_segment.end1)
+            continue
+        checked_penetrations.extend(penetrations_same_line_segment_sorted_from_end2)
+        
+        if is_line_end_outer(penetration.line_segment.end1, penetration.line_segment.end2, penetration.penetrated_triangle):
+            if not any(x is penetration.line_segment.end2 for x in positions_outer):
+                positions_outer.append(penetration.line_segment.end2)
+        else:
+            if not any(x is penetration.line_segment.end2 for x in positions_inner):
+                positions_inner.append(penetration.line_segment.end2)
+        
+        if 0 == len(penetrations_same_line_segment_sorted_from_end2) % 2:
+            if not any(x is penetration.line_segment.end1 for x in positions_outer):
+                positions_outer.append(penetration.line_segment.end1)
+        else:
+            if not any(x is penetration.line_segment.end1 for x in positions_inner):
+                positions_inner.append(penetration.line_segment.end1)
+    return (positions_inner, positions_outer)
+                

@@ -10,7 +10,7 @@ import numpy as np
 
 from typing import List
 
-from .util import EndSurface, Facet, MonocoqueShell
+from .util import EndSurface, Facet, MonocoqueShell, Position, Triangle
 
 @dataclass
 class Rib:
@@ -74,37 +74,45 @@ class Rib:
                 facet.calc_normal()
                 facet.write(f)
     
-    def generate_monocoque_shells_beam(self, keel, former_rib_edges, monocoque_shells):
+    def generate_monocoque_shells_beam(
+        self, monocoque_shell, keel, former_rib_positions, end_rib_positions):
         edges_count = len(self.edges)
         if self.edges is None or edges_count <= 2:
-            return None
-        return_edges = []
-        for edge in self.edges:
-            translated_edge = np.array([edge[0], edge[1], keel.length * self.position, 1.])
-            return_edges.append(translated_edge)
-        if former_rib_edges is not None \
-            and len(former_rib_edges) != 0 \
-            and len(return_edges) != 0:
+            return former_rib_positions
+
+        return_positions = []
+        if None == end_rib_positions:
+            for edge in self.edges:
+                translated_edge = np.array([edge[0], edge[1], keel.length * self.position, 1.])
+                return_positions.append(Position(translated_edge))
+            monocoque_shell.positions.extend(return_positions)
+        else:
+            return_positions = end_rib_positions
+        if former_rib_positions is not None \
+            and len(former_rib_positions) != 0 \
+            and len(return_positions) != 0:
 
             end_surface = EndSurface().rib_to_vectors(self)
-            monocoque_shells.extend(Rib.generate_monocoque_inter_edges(former_rib_edges, return_edges, end_surface.is_clockwise))
-        return return_edges
+            monocoque_shell.triangles.extend(
+                Rib.generate_monocoque_inter_positions(
+                    former_rib_positions, return_positions, end_surface.is_clockwise))
+        return return_positions
 
-    def generate_monocoque_shell_start(self, z_position):
+    def generate_monocoque_shell_start(self, monocoque_shell, z_position):
         edges_count = len(self.edges)
         if edges_count <= 2:
             return None
         else:
             return EndSurface().rib_to_vectors(self).generate_monocoque_shells(
-                z_position, is_start_side=True)
+                monocoque_shell, z_position, is_start_side=True)
 
-    def generate_monocoque_shell_end(self, z_position):
+    def generate_monocoque_shell_end(self, monocoque_shell, z_position):
         edges_count = len(self.edges)
         if edges_count <= 2:
             return None
         else:
             return EndSurface().rib_to_vectors(self).generate_monocoque_shells(
-                z_position, is_start_side=False)
+                monocoque_shell, z_position, is_start_side=False)
 
     @staticmethod
     def draw_beam(former_rib_edges, edges):
@@ -156,14 +164,13 @@ class Rib:
                 facet.write(f)
     
     @staticmethod
-    def generate_monocoque_inter_edges(former_rib_edges, edges, is_clockwise):
-        monocoque_shells = []
-        for i in range(len(edges)):
-            monocoque_shell_1 = MonocoqueShell(edges[i], edges[i-1], former_rib_edges[i-1])
-            monocoque_shells.append(monocoque_shell_1)
-            monocoque_shell_2 = MonocoqueShell(edges[i], former_rib_edges[i-1], former_rib_edges[i])
-            monocoque_shells.append(monocoque_shell_2)
+    def generate_monocoque_inter_positions(former_rib_positions, positions, is_clockwise):
+        triangles = []
+        for i in range(len(positions)):
+            triangle_1 = Triangle(positions[i], positions[i-1], former_rib_positions[i-1])
+            triangle_2 = Triangle(positions[i], former_rib_positions[i-1], former_rib_positions[i])
             if is_clockwise:
-                monocoque_shell_1.inverse()
-                monocoque_shell_2.inverse()
-        return monocoque_shells
+                triangle_1.inverse()
+                triangle_2.inverse()
+            triangles.extend([triangle_1, triangle_2])
+        return triangles
