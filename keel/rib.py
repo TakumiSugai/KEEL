@@ -10,7 +10,7 @@ import numpy as np
 
 from typing import List
 
-from .util import EndSurface, Facet
+from .util import EndSurface, Facet, MonocoqueShell, Position, Triangle
 
 @dataclass
 class Rib:
@@ -73,6 +73,46 @@ class Rib:
                 facet.translation(keel.translation(self.position))
                 facet.calc_normal()
                 facet.write(f)
+    
+    def generate_monocoque_shells_beam(
+        self, monocoque_shell, keel, former_rib_positions, end_rib_positions):
+        edges_count = len(self.edges)
+        if self.edges is None or edges_count <= 2:
+            return former_rib_positions
+
+        return_positions = []
+        if None == end_rib_positions:
+            for edge in self.edges:
+                translated_edge = np.array([edge[0], edge[1], keel.length * self.position, 1.])
+                return_positions.append(Position(translated_edge))
+            monocoque_shell.positions.extend(return_positions)
+        else:
+            return_positions = end_rib_positions
+        if former_rib_positions is not None \
+            and len(former_rib_positions) != 0 \
+            and len(return_positions) != 0:
+
+            end_surface = EndSurface().rib_to_vectors(self)
+            monocoque_shell.triangles.extend(
+                Rib.generate_monocoque_inter_positions(
+                    former_rib_positions, return_positions, end_surface.is_clockwise))
+        return return_positions
+
+    def generate_monocoque_shell_start(self, monocoque_shell, z_position):
+        edges_count = len(self.edges)
+        if edges_count <= 2:
+            return None
+        else:
+            return EndSurface().rib_to_vectors(self).generate_monocoque_shells(
+                monocoque_shell, z_position, is_start_side=True)
+
+    def generate_monocoque_shell_end(self, monocoque_shell, z_position):
+        edges_count = len(self.edges)
+        if edges_count <= 2:
+            return None
+        else:
+            return EndSurface().rib_to_vectors(self).generate_monocoque_shells(
+                monocoque_shell, z_position, is_start_side=False)
 
     @staticmethod
     def draw_beam(former_rib_edges, edges):
@@ -122,3 +162,15 @@ class Rib:
                 facet.vertex_3 = former_rib_edges[i]
                 facet.calc_normal()
                 facet.write(f)
+    
+    @staticmethod
+    def generate_monocoque_inter_positions(former_rib_positions, positions, is_clockwise):
+        triangles = []
+        for i in range(len(positions)):
+            triangle_1 = Triangle(positions[i], positions[i-1], former_rib_positions[i-1])
+            triangle_2 = Triangle(positions[i], former_rib_positions[i-1], former_rib_positions[i])
+            if is_clockwise:
+                triangle_1.inverse()
+                triangle_2.inverse()
+            triangles.extend([triangle_1, triangle_2])
+        return triangles

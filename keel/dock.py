@@ -146,7 +146,7 @@ class Dock:
         for target_ship in self.ships:
             for parent in target_ship.parents:
                 if ship is parent:
-                    target_ship.transration_dirty_flag = True
+                    target_ship.translation_dirty_flag = True
 
     def sanitize_dock(self, force=False):
         for target_ship in reversed(self.ships):
@@ -155,8 +155,12 @@ class Dock:
         self.ships.sort(key=lambda ship: len(ship.parents))
 
         for target_ship in self.ships:
-            if target_ship.parent != None and (force or target_ship.transration_dirty_flag):
+            if target_ship.parent != None and (force or target_ship.translation_dirty_flag):
                 target_ship.sanitize_keel()
+        
+        for target_ship in self.ships:
+            if 0 != len(target_ship.subtracts):
+                target_ship.apply_subtructions()
 
     def generate_translate_matrix(self):
         translate_matlix = np.matrix(np.identity(4), copy=False, dtype='float32')
