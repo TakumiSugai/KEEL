@@ -165,6 +165,9 @@ class Position:
     position: np.array
     translated_position: np.array = field(default=None)
 
+    def __hash__(self):
+        return hash(id(self))
+
     def translate(self, translation):
         self.translated_position = \
             np.dot(calc_util.extend_vector_1by4(self.position), translation)
@@ -177,6 +180,10 @@ class Position:
         vector = position.position - self.position
         vector[3] = 1.
         return vector
+    
+    def distance(self, other_position):
+        vector = calc_util.extract_vector_1by3(self.vector_to(other_position))
+        return np.linalg.norm(vector)
     
 @dataclass
 class Triangle:
@@ -200,6 +207,11 @@ class Triangle:
     
     def is_equal(self, triangle):
         return 3 == sum([1 for x in [self.is_contains(triangle.vertex_1), self.is_contains(triangle.vertex_2), self.is_contains(triangle.vertex_3)] if x])
+
+    def center_position(self):
+        position = (self.vertex_1.position + self.vertex_2.position + self.vertex_3.position)/3
+        position[3] = 1.
+        return Position(position)
 
     def draw(self):
         if self.vertex_1 is None or self.vertex_2 is None or self.vertex_3 is None:
@@ -325,11 +337,60 @@ class Penetration:
     def position_on_lines_segment_from(self, position):
         return self.position_on_lines_segment if self.line_segment.end1 is position else (1. - self.position_on_lines_segment)
 
+def check_line_segments_distance(self_line_segments, other_line_segments, min_distance_limit, epsilon):
+    for self_line_segment in self_line_segments:
+        for other_line_segment in other_line_segments:
+            if not calc_util.is_positions_overrap_any(self_line_segment.get_positions(), other_line_segment.get_positions()):
+                continue
+            
+            vector_self_line_segment = calc_util.extract_vector_1by3(self_line_segment.end1.vector_to(self_line_segment.end2))
+            vector_other_line_segment = calc_util.extract_vector_1by3(other_line_segment.end1.vector_to(other_line_segment.end2))
+            vector_inter_start_positions = calc_util.extract_vector_1by3(self_line_segment.end1.vector_to(other_line_segment.end1))
+
+            outer_product = np.cross(vector_self_line_segment, vector_other_line_segment)
+            outer_product_size = np.linalg.norm(outer_product)
+
+            distance = 0
+            if (outer_product_size < epsilon):
+                distance = np.dot(vector_self_line_segment, vector_inter_start_positions)/np.linalg.norm(vector_self_line_segment)
+                if abs(distance) < min_distance_limit:
+                    vector_self_to_other_end1 = calc_util.extract_vector_1by3(self_line_segment.end1.vector_to(other_line_segment.end1))
+                    vector_self_to_other_end2 = calc_util.extract_vector_1by3(self_line_segment.end1.vector_to(other_line_segment.end2))
+                    dot1 = np.dot(vector_self_line_segment, vector_self_to_other_end1)
+                    dot2 = np.dot(vector_self_line_segment, vector_self_to_other_end2)
+                    if dot1 * dot2 < 0:
+                        continue
+                    elif 0 < dot1 * dot2:
+                        length_self = np.linalg.norm(vector_self_line_segment)
+                        if np.linalg.norm(vector_self_to_other_end1) < length_self \
+                            or np.linalg.norm(vector_self_to_other_end2) < length_self:
+                            raise Exception
+                        continue
+                    elif 0 == dot1 and dot2 < 0:
+                        continue
+                    elif 0 == dot2 and dot1 < 0:
+                        continue
+                    else:
+                        continue
+            else:
+                distance = np.dot(outer_product, vector_inter_start_positions)/outer_product_size
+                if (abs(distance) < min_distance_limit):
+                    dot1 = np.dot(vector_inter_start_positions, vector_self_line_segment/np.linalg.norm(vector_self_line_segment))
+                    dot2 = np.dot(vector_inter_start_positions, vector_other_line_segment/np.linalg.norm(vector_other_line_segment))
+                    dot3 = np.dot(vector_self_line_segment/np.linalg.norm(vector_self_line_segment), \
+                        vector_other_line_segment/np.linalg.norm(vector_other_line_segment))
+                    position_on_self_vector = (dot1 - dot2*dot3)/(1 - dot3*dot3) / np.linalg.norm(vector_self_line_segment)
+                    position_on_other_vector = (dot2 - dot1*dot3)/(dot3*dot3 - 1) / np.linalg.norm(vector_other_line_segment)
+                    if (0 <= position_on_self_vector and position_on_self_vector <= 1) \
+                        and (0 <= position_on_other_vector and position_on_other_vector <= 1):
+                        raise Exception
+           
+
 def calc_penetration(triangles, line_segments):
     penetrations = [] 
     for triangle in triangles:
         for line_segment in line_segments:
-            if not calc_util.is_positions_overrap(triangle.get_positions(), line_segment.get_positions()):
+            if not calc_util.is_positions_overrap_all(triangle.get_positions(), line_segment.get_positions()):
                 continue
             vector_ray = calc_util.extract_vector_1by3(line_segment.end1.vector_to(line_segment.end2))
             
@@ -341,13 +402,14 @@ def calc_penetration(triangles, line_segments):
             outer2_3 = np.cross(vector_ray_to_v2, vector_ray_to_v3)
             outer3_1 = np.cross(vector_ray_to_v3, vector_ray_to_v1)
 
-            inner_product1 = np.dot(outer1_2, vector_ray)
-            inner_product2 = np.dot(outer2_3, vector_ray)
-            inner_product3 = np.dot(outer3_1, vector_ray)
-
-            if 0 > inner_product1 * inner_product2 or 0 > inner_product1 * inner_product3:
-                continue
+            inner_product_with_side1_2 = np.dot(outer1_2, vector_ray)
+            inner_product_with_side2_3 = np.dot(outer2_3, vector_ray)
+            inner_product_with_side3_1 = np.dot(outer3_1, vector_ray)
             
+            if 0 > inner_product_with_side1_2 * inner_product_with_side2_3 \
+                or 0 > inner_product_with_side1_2 * inner_product_with_side3_1:
+                continue
+
             vector_side1_2 = calc_util.extract_vector_1by3(triangle.vertex_1.vector_to(triangle.vertex_2))
             vector_side1_3 = calc_util.extract_vector_1by3(triangle.vertex_1.vector_to(triangle.vertex_3))
             vector_ray_origin_to_vertex1 = calc_util.extract_vector_1by3(triangle.vertex_1.vector_to(line_segment.end1))
@@ -361,21 +423,6 @@ def calc_penetration(triangles, line_segments):
                 calc_util.extract_vector_1by3(triangle.vertex_1.position) + vector_side1_2 * solved[1] + vector_side1_3 * solved[2]))
             penetrations.append(Penetration(line_segment, solved[0], triangle, penetrated_positiron))
     return penetrations
-
-def fetch_positions_not_affected_penetrations(positions, line_segments, penetrations):
-    positions_not_affected_penetrations = []
-    previous_positions_count = 0
-    while True: 
-        line_segments_related =  list(x for x in line_segments if any(x.is_contains(y) for y in positions))
-        line_segments_not_affected_penetrations = list(x for x in line_segments_related if not any(x is y.line_segment for y in penetrations))
-        positions_not_affected_penetrations.extend(list(x.end1 for x in line_segments_not_affected_penetrations if not any(x.end1 is y for y in positions_not_affected_penetrations)))
-        positions_not_affected_penetrations.extend(list(x.end2 for x in line_segments_not_affected_penetrations if not any(x.end2 is y for y in positions_not_affected_penetrations)))
-        if previous_positions_count == len(positions_not_affected_penetrations):
-            break
-        previous_positions_count = len(positions_not_affected_penetrations)
-    return positions_not_affected_penetrations
-    
-
 
 def fetch_penetrated_triangles(penetrations):
     triangles = []
@@ -428,16 +475,7 @@ def fetch_pair_penetration(triangle, penetrations, exclude=[]):
 def fetch_penetrations_related_triangle(triangle, penetrations):
     return list(x for x in penetrations if x.penetrated_triangle is triangle)
 
-def fetch_triangles_contains_two_positions(positions, triangles, exclude=[]):
-    return list(x for x in triangles if x.is_contains_two_position(positions) and not any(x is y for y in exclude))
-
-def fetch_triangles_contains_positions_pair(position1, position2, triangles, exclude=[]):
-    return list(x for x in triangles if x.is_contains(position1) and x.is_contains(position2) and not any(x is y for y in exclude))
-
-def fetch_triangles_contains_position(position, triangles, exclude=[]):
-    return list(x for x in triangles if x.is_contains(position) and not any(x is y for y in exclude))
-
-def subdivide_penetrated_faces(penetrations1, penetrations2):
+def subdivide_penetrated_faces(penetrations1, penetrations2, epsilon):
 
     penetrating_triangles1 = fetch_penetrating_triangles(penetrations2)
 
@@ -465,9 +503,7 @@ def subdivide_penetrated_faces(penetrations1, penetrations2):
         poligons = []
         while None != current or len(checked_side_penetrations) != len(side_penetrations):
             if None == current:
-                count = 0
                 for side_penetration in side_penetrations:
-                    count = count + 1
                     if any(side_penetration is x for x in checked_side_penetrations):
                        continue
                     current = side_penetration
@@ -551,13 +587,12 @@ def subdivide_penetrated_faces(penetrations1, penetrations2):
                 poligons.append(poligon.copy())
                 poligon = []
                 path_penetrations = []
-        triangles.extend(generate_subdivide_triangles(poligons, penetrated_triangle))
+        triangles.extend(generate_subdivide_triangles(poligons, penetrated_triangle, epsilon))
     return triangles
 
         
 
-def calc_concave_3d(positions, default_outer_product):
-    epsilon = 1e-14
+def calc_concave_3d(positions, default_outer_product, epsilon):
     vectors = []
     for i in range(len(positions)):
         vectors.append(calc_util.extract_vector_1by3(positions[i-1].vector_to(positions[i])))
@@ -579,7 +614,7 @@ def calc_concave_3d(positions, default_outer_product):
             list_is_concave.append(False)
     return list_is_concave
 
-def generate_subdivide_triangles(poligons, triangle):
+def generate_subdivide_triangles(poligons, triangle, epsilon):
     triangles = []
     for poligon in poligons:
         if 3 == len(poligon):
@@ -590,7 +625,7 @@ def generate_subdivide_triangles(poligons, triangle):
             calc_util.extract_vector_1by3(triangle.vertex_1.vector_to(triangle.vertex_2)), 
             calc_util.extract_vector_1by3(triangle.vertex_1.vector_to(triangle.vertex_3))))
 
-        list_is_concave = calc_concave_3d(poligon, default_outer_product)
+        list_is_concave = calc_concave_3d(poligon, default_outer_product, epsilon)
         while(any(list_is_concave)):
             for i in range(len(list_is_concave)):
                 if list_is_concave[i - 2]:
@@ -600,7 +635,7 @@ def generate_subdivide_triangles(poligons, triangle):
                             poligon[i-1],
                             poligon[i]))
                         del poligon[i-1]
-                        list_is_concave = calc_concave_3d(poligon, default_outer_product)
+                        list_is_concave = calc_concave_3d(poligon, default_outer_product, epsilon)
                         break
         
         for i in range(len(poligon) - 2):
@@ -621,76 +656,3 @@ def is_line_end_outer(start, end, penetrated_triangle):
         return True
     return False
 
-def fetch_position_pair_inout(penetrations):
-    positions_inner = []
-    positions_outer = []
-    checked_penetrations = []
-    for penetration in penetrations:
-        if any(x is penetration for x in checked_penetrations):
-            continue
-        penetrations_same_line_segment_sorted_from_end2 \
-            = fetch_penetrations_related_positions(penetrations, penetration.line_segment.end2, penetration.line_segment.end1)
-        
-        if 1 == len(penetrations_same_line_segment_sorted_from_end2):
-            if is_line_end_outer(penetration.line_segment.end1, penetration.line_segment.end2, penetration.penetrated_triangle):
-                positions_inner.append((penetration.position, penetration.line_segment.end1))
-                positions_outer.append((penetration.position, penetration.line_segment.end2))
-            else:
-                positions_inner.append((penetration.position, penetration.line_segment.end2))
-                positions_outer.append((penetration.position, penetration.line_segment.end1))
-            continue
-        checked_penetrations.extend(penetrations_same_line_segment_sorted_from_end2)
-        is_outer_now = is_line_end_outer(penetration.line_segment.end1, penetration.line_segment.end2, penetration.penetrated_triangle)
-        previous_position = penetration.line_segment.end2
-        for penetration_same_line_segment in penetrations_same_line_segment_sorted_from_end2:
-            if is_outer_now:
-                positions_outer.append((previous_position, penetration_same_line_segment.position))
-            else:
-                positions_inner.append((previous_position, penetration_same_line_segment.position))
-            is_outer_now = not is_outer_now
-            previous_position = penetration_same_line_segment.position
-        if is_outer_now:
-            positions_outer.append((previous_position, penetration.line_segment.end1))
-        else:
-            positions_inner.append((previous_position, penetration.line_segment.end1))
-    return (positions_inner, positions_outer)
-
-def fetch_positions_inout(penetrations):
-    positions_inner = []
-    positions_outer = []
-    checked_penetrations = []
-    for penetration in penetrations:
-        if any(x is penetration for x in checked_penetrations):
-            continue
-        penetrations_same_line_segment_sorted_from_end2 \
-            = fetch_penetrations_related_positions(penetrations, penetration.line_segment.end2, penetration.line_segment.end1)
-        
-        if 1 == len(penetrations_same_line_segment_sorted_from_end2):
-            if is_line_end_outer(penetration.line_segment.end1, penetration.line_segment.end2, penetration.penetrated_triangle):
-                if not any(x is penetration.line_segment.end1 for x in positions_inner):
-                    positions_inner.append(penetration.line_segment.end1)
-                if not any(x is penetration.line_segment.end2 for x in positions_outer):
-                    positions_outer.append(penetration.line_segment.end2)
-            else:
-                if not any(x is penetration.line_segment.end2 for x in positions_inner):
-                    positions_inner.append(penetration.line_segment.end2)
-                if not any(x is penetration.line_segment.end1 for x in positions_outer):
-                    positions_outer.append(penetration.line_segment.end1)
-            continue
-        checked_penetrations.extend(penetrations_same_line_segment_sorted_from_end2)
-        
-        if is_line_end_outer(penetration.line_segment.end1, penetration.line_segment.end2, penetration.penetrated_triangle):
-            if not any(x is penetration.line_segment.end2 for x in positions_outer):
-                positions_outer.append(penetration.line_segment.end2)
-        else:
-            if not any(x is penetration.line_segment.end2 for x in positions_inner):
-                positions_inner.append(penetration.line_segment.end2)
-        
-        if 0 == len(penetrations_same_line_segment_sorted_from_end2) % 2:
-            if not any(x is penetration.line_segment.end1 for x in positions_outer):
-                positions_outer.append(penetration.line_segment.end1)
-        else:
-            if not any(x is penetration.line_segment.end1 for x in positions_inner):
-                positions_inner.append(penetration.line_segment.end1)
-    return (positions_inner, positions_outer)
-                

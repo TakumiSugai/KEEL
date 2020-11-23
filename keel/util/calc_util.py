@@ -65,7 +65,12 @@ def is_positions_overrap_on_plane(positions1, positions2, index):
         return False
     return True
 
-def is_positions_overrap(positions1, positions2):
+def is_positions_overrap_all(positions1, positions2):
     return is_positions_overrap_on_plane(positions1, positions2, 0) \
         and is_positions_overrap_on_plane(positions1, positions2, 1) \
         and is_positions_overrap_on_plane(positions1, positions2, 2)
+
+def is_positions_overrap_any(positions1, positions2):
+    return is_positions_overrap_on_plane(positions1, positions2, 0) \
+        or is_positions_overrap_on_plane(positions1, positions2, 1) \
+        or is_positions_overrap_on_plane(positions1, positions2, 2)

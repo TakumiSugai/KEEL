@@ -229,6 +229,7 @@ class Ship:
             else:
                 self.calc_relative_translation_to_ancestor(subtract_ship, self, relative_translation)
             self.subtract(subtract_ship, relative_translation)
+        self.subtracts = [] 
     
     def calc_relative_translation_to_ancestor(self, ship, ship_ancestor, translation):
         if ship.parent is None:
@@ -239,12 +240,14 @@ class Ship:
         else:
             self.calc_relative_translation_to_ancestor(ship.parent, ship_ancestor, translation)
 
-    def subtract(self, subtraction, translation):
+    def subtract(self, subtraction, translation, min_distance_limit=0.001, epsilon = 1e-14):
         subtraction.monocoque_shell.translate(translation)
         subtraction.monocoque_shell.copy_translated_to_default()
 
         self_line_segments = self.monocoque_shell.generate_line_segments()
         subtraction_line_segments = subtraction.monocoque_shell.generate_line_segments()
+
+        model_util.check_line_segments_distance(self_line_segments, subtraction_line_segments, min_distance_limit, epsilon)
 
         penetrations_self = model_util.calc_penetration(self.monocoque_shell.triangles, subtraction_line_segments)
         penetrations_subtrantion =  model_util.calc_penetration(subtraction.monocoque_shell.triangles, self_line_segments)
@@ -252,8 +255,11 @@ class Ship:
         penetrating_triangles_self = model_util.fetch_penetrating_triangles(penetrations_subtrantion)
         penetrating_triangles_subtrantion = model_util.fetch_penetrating_triangles(penetrations_self)
 
-        subdivided_self = model_util.subdivide_penetrated_faces(penetrations_self, penetrations_subtrantion)
-        subdivided_subtraction = model_util.subdivide_penetrated_faces(penetrations_subtrantion, penetrations_self)
+        subdivided_self = model_util.subdivide_penetrated_faces(penetrations_self, penetrations_subtrantion, epsilon)
+        subdivided_subtraction = model_util.subdivide_penetrated_faces(penetrations_subtrantion, penetrations_self, epsilon)
+
+        self_triangles_before_subdivide = list(map(lambda x: (x, x.center_position()), iter(self.monocoque_shell.triangles)))
+        subtraction_triangles_before_subdivide = list(map(lambda x: (x, x.center_position()), iter(subtraction.monocoque_shell.triangles)))
 
         self.monocoque_shell.triangles = list(x for x in self.monocoque_shell.triangles if not any(x is y for y in penetrating_triangles_self))
         subtraction.monocoque_shell.triangles = list(x for x in subtraction.monocoque_shell.triangles if not any(x is y for y in penetrating_triangles_subtrantion))
@@ -261,131 +267,60 @@ class Ship:
         self.monocoque_shell.triangles.extend(subdivided_self)
         subtraction.monocoque_shell.triangles.extend(subdivided_subtraction)
 
-        add_penetration_positions = [x.position for x in penetrations_self]#for test
-        add_penetration_positions.extend([x.position for x in penetrations_subtrantion])
-        self.monocoque_shell.positions.extend(add_penetration_positions)
+        self_outer_triangles = []
+        for self_triangle in self.monocoque_shell.triangles:
+            self_triangle_center = self_triangle.center_position()
+            subtraction_triangles_before_subdivide_with_distance = []
+            for subtraction_triangle in subtraction_triangles_before_subdivide:
+                distance = self_triangle.center_position().distance(subtraction_triangle[1])
+                subtraction_triangles_before_subdivide_with_distance.append(\
+                    (subtraction_triangle[0], subtraction_triangle[1], distance))
+            
+            subtraction_triangles_before_subdivide_with_distance.sort(key=lambda p: p[2])
+            for near_triangle_with_distance in subtraction_triangles_before_subdivide_with_distance:
+                near_triangle = near_triangle_with_distance[0]
+                vector_vertex1_to_2 = calc_util.extract_vector_1by3(near_triangle.vertex_1.vector_to(near_triangle.vertex_2))
+                vector_vertex1_to_3 = calc_util.extract_vector_1by3(near_triangle.vertex_1.vector_to(near_triangle.vertex_3))
+                outer_product_near_triangle = np.cross(vector_vertex1_to_2, vector_vertex1_to_3)
+                center_self_to_subtraction = calc_util.extract_vector_1by3(self_triangle_center.vector_to(near_triangle.center_position()))
+                dot = np.dot(outer_product_near_triangle, center_self_to_subtraction)
+                if abs(dot) < epsilon:
+                    continue
+                elif dot < 0:
+                    self_outer_triangles.append(self_triangle)
+                    break
+                
+        self.monocoque_shell.triangles = self_outer_triangles
 
-        self_inside_positions, self_outside_positions = model_util.fetch_positions_inout(penetrations_subtrantion)
+        subtraction_outer_triangles = []
+        for subtraction_triangle in subtraction.monocoque_shell.triangles:
+            subtraction_triangle_center = subtraction_triangle.center_position()
+            self_triangles_before_subdivide_with_distance = []
+            for self_triangle in self_triangles_before_subdivide:
+                distance = subtraction_triangle.center_position().distance(self_triangle[1])
+                self_triangles_before_subdivide_with_distance.append(\
+                    (self_triangle[0], self_triangle[1], distance))
+            
+            self_triangles_before_subdivide_with_distance.sort(key=lambda p: p[2])
+            for near_triangle_with_distance in self_triangles_before_subdivide_with_distance:
+                near_triangle = near_triangle_with_distance[0]
+                vector_vertex1_to_2 = calc_util.extract_vector_1by3(near_triangle.vertex_1.vector_to(near_triangle.vertex_2))
+                vector_vertex1_to_3 = calc_util.extract_vector_1by3(near_triangle.vertex_1.vector_to(near_triangle.vertex_3))
+                outer_product_near_triangle = np.cross(vector_vertex1_to_2, vector_vertex1_to_3)
+                center_subtraction_to_self = calc_util.extract_vector_1by3(subtraction_triangle_center.vector_to(near_triangle.center_position()))
+                dot = np.dot(outer_product_near_triangle, center_subtraction_to_self)
+                if abs(dot) < epsilon:
+                    continue
+                elif dot < 0:
+                    subtraction_outer_triangles.append(subtraction_triangle)
+                    break
+                
+        subtraction.monocoque_shell.triangles = list(x for x in subtraction.monocoque_shell.triangles if not any(x is y for y in subtraction_outer_triangles))
+        for subtraction_triangle in subtraction.monocoque_shell.triangles:
+            subtraction_triangle.inverse()
+        self.monocoque_shell.triangles.extend(subtraction.monocoque_shell.triangles)
 
-        self_inside_positions.extend(
-            model_util.fetch_positions_not_affected_penetrations(
-                self_inside_positions, self_line_segments, penetrations_subtrantion))
-        self_outside_positions.extend(
-            model_util.fetch_positions_not_affected_penetrations(
-                self_outside_positions, self_line_segments, penetrations_subtrantion))
-
-        inner_triangles_self = []
-        outer_triangles_self = []
-        inner_triangles_self.extend(
-            model_util.fetch_triangles_contains_two_positions(self_inside_positions, self.monocoque_shell.triangles))
-        outer_triangles_self.extend(
-            model_util.fetch_triangles_contains_two_positions(self_outside_positions, self.monocoque_shell.triangles))
-
-        for self_inside_position in self_inside_positions:
-            inner_triangles_self.extend(
-                list(x for x in model_util.fetch_triangles_contains_position(self_inside_position, self.monocoque_shell.triangles, exclude=outer_triangles_self)\
-                    if not any(y is x for y in inner_triangles_self)))
-        for self_outside_position in self_outside_positions:
-            outer_triangles_self.extend(
-                list(x for x in model_util.fetch_triangles_contains_position(self_outside_position, self.monocoque_shell.triangles, exclude=inner_triangles_self)\
-                    if not any(y is x for y in outer_triangles_self)))
-
-
-        self_inside_pair, self_outside_pair = model_util.fetch_position_pair_inout(penetrations_subtrantion)
-        
-        for self_inside in self_inside_pair:
-            inner_triangles_self.extend(
-                list(x for x in model_util.fetch_triangles_contains_positions_pair(
-                    self_inside[0], self_inside[1], self.monocoque_shell.triangles, exclude=outer_triangles_self)\
-                        if not any(y is x for y in inner_triangles_self)))
-        for self_outside in self_outside_pair:
-            outer_triangles_self.extend(
-                list(x for x in model_util.fetch_triangles_contains_positions_pair(
-                    self_outside[0], self_outside[1], self.monocoque_shell.triangles, exclude=inner_triangles_self)\
-                        if not any(y is x for y in outer_triangles_self)))
-        
-        inner_triangles_self_touched = []
-        inner_triangles_self_touched_previous_count = 0
-        inner_triangles_self_previous_count = 0
-        while inner_triangles_self_previous_count != len(inner_triangles_self) \
-            or inner_triangles_self_touched_previous_count != len(inner_triangles_self_touched):
-            inner_triangles_self_touched_previous_count = len(inner_triangles_self_touched)
-            inner_triangles_self_previous_count = len(inner_triangles_self)
-            touched = list(x for x in self.monocoque_shell.triangles if any(y.is_touched_side(x) for y in inner_triangles_self))
-            touched_exclude_outer = list(x for x in touched if not any(y is x for y in outer_triangles_self))
-            inner_triangles_self_touched.extend(list(x for x in touched_exclude_outer if not any(y is x for y in inner_triangles_self_touched)))
-            inner_triangles_self.extend(list(x for x in inner_triangles_self_touched if not any(y is x for y in inner_triangles_self)))
-        
-        self.monocoque_shell.triangles = list(x for x in self.monocoque_shell.triangles if not any(y is x for y in inner_triangles_self))
-
-        subtraction_inside_positions, subtraction_outside_positions = model_util.fetch_positions_inout(penetrations_self)
-
-        self_inside_positions.extend(
-            model_util.fetch_positions_not_affected_penetrations(
-                subtraction_inside_positions, subtraction_line_segments, penetrations_self))
-        self_outside_positions.extend(
-            model_util.fetch_positions_not_affected_penetrations(
-                subtraction_outside_positions, subtraction_line_segments, penetrations_self))
-
-        inner_triangles_subtraction = []
-        outer_triangles_subtraction = []
-        inner_triangles_subtraction.extend(
-            model_util.fetch_triangles_contains_position(subtraction_inside_positions, subtraction.monocoque_shell.triangles))
-        outer_triangles_subtraction.extend(
-            model_util.fetch_triangles_contains_position(subtraction_outside_positions, subtraction.monocoque_shell.triangles))
-        
-        for subtraction_inside_position in subtraction_inside_positions:
-            inner_triangles_subtraction.extend(
-                list(x for x in model_util.fetch_triangles_contains_position(subtraction_inside_position, subtraction.monocoque_shell.triangles, exclude=outer_triangles_subtraction)\
-                    if not any(y is x for y in inner_triangles_subtraction)))
-        for subtraction_outside_position in subtraction_outside_positions:
-            outer_triangles_subtraction.extend(
-                list(x for x in model_util.fetch_triangles_contains_position(subtraction_outside_position, subtraction.monocoque_shell.triangles, exclude=inner_triangles_subtraction)\
-                    if not any(y is x for y in outer_triangles_subtraction)))
-
-        subtraction_inside_pair, subtraction_outside_pair = model_util.fetch_position_pair_inout(penetrations_self)
-        
-        for subtraction_inside in subtraction_inside_pair:
-            inner_triangles_subtraction.extend(
-                list(x for x in model_util.fetch_triangles_contains_positions_pair(
-                    subtraction_inside[0], subtraction_inside[1], subtraction.monocoque_shell.triangles, exclude=outer_triangles_subtraction)\
-                        if not any(y is x for y in inner_triangles_subtraction)))
-        
-        for subtraction_outside in subtraction_outside_pair:
-            outer_triangles_subtraction.extend(
-                list(x for x in model_util.fetch_triangles_contains_positions_pair(
-                    subtraction_outside[0], subtraction_outside[1], subtraction.monocoque_shell.triangles, exclude=inner_triangles_subtraction)\
-                        if not any(y is x for y in outer_triangles_subtraction)))
-
-        inner_triangles_subtraction_touched = []
-        inner_triangles_subtraction_touched_previous_count = 0
-        inner_triangles_subtraction_previous_count = 0
-        while inner_triangles_subtraction_previous_count != len(inner_triangles_subtraction) \
-            or inner_triangles_subtraction_touched_previous_count != len(inner_triangles_subtraction_touched):
-            inner_triangles_subtraction_touched_previous_count = len(inner_triangles_subtraction_touched)
-            inner_triangles_subtraction_previous_count = len(inner_triangles_subtraction)
-            touched = list(x for x in subtraction.monocoque_shell.triangles if any(y.is_touched_side(x) for y in inner_triangles_subtraction))
-            touched_exclude_outer = list(x for x in touched if not any(y is x for y in outer_triangles_subtraction))
-            inner_triangles_subtraction_touched.extend(list(x for x in touched_exclude_outer if not any(y is x for y in inner_triangles_subtraction_touched)))
-            inner_triangles_subtraction.extend(list(x for x in inner_triangles_subtraction_touched if not any(y is x for y in inner_triangles_subtraction)))
-        
-        for inner_triangle_subtraction in inner_triangles_subtraction:
-            inner_triangle_subtraction.inverse()
-        
-        self.monocoque_shell.triangles.extend(inner_triangles_subtraction)
-        
-        #temp
-        self.monocoque_shell.positions.extend(subtraction.monocoque_shell.positions)
-        # positionの追加を整理して完成positionの追加を整理して完成
-
-        
-        
-
-        
-
-
-
-
-    
-
-        
+        positions_set = set()
+        for self_triangle in self.monocoque_shell.triangles:
+            positions_set |= set(self_triangle.get_positions())
+        self.monocoque_shell.positions = list(positions_set)
